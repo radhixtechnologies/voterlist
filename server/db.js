@@ -79,7 +79,9 @@ const postgresSchema = `
 `;
 
 function initializeSqlite() {
-  const defaultPath = path.join(__dirname, '..', 'data', 'voter_portal.db');
+  const defaultPath = process.env.VERCEL
+    ? path.join('/tmp', 'voter_portal.db')
+    : path.join(__dirname, '..', 'data', 'voter_portal.db');
   const dbPath = process.env.SQLITE_DATABASE_PATH
     ? path.resolve(process.env.SQLITE_DATABASE_PATH)
     : defaultPath;
@@ -127,6 +129,10 @@ function initializeSqlite() {
 }
 
 export async function initDatabase() {
+  if (process.env.VERCEL && !process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL must be configured for Vercel deployments.');
+  }
+
   if (!isPostgres) {
     initializeSqlite();
     return;

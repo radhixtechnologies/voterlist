@@ -27,6 +27,10 @@ const allowedOrigins = new Set(
     .filter(Boolean)
 );
 
+if (process.env.NODE_ENV === 'production' && allowedOrigins.size === 0) {
+  throw new Error('CORS_ORIGIN must be configured in production.');
+}
+
 // Middleware
 app.use(cors({
   origin(origin, callback) {
@@ -90,9 +94,13 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`=======================================================`);
-  console.log(` CivicPulse Voter Management Server running on port ${PORT}`);
-  console.log(` API Base: http://localhost:${PORT}/api`);
-  console.log(`=======================================================`);
-});
+export default app;
+
+if (process.env.NODE_ENV !== 'test' && !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`=======================================================`);
+    console.log(` CivicPulse Voter Management Server running on port ${PORT}`);
+    console.log(` API Base: http://localhost:${PORT}/api`);
+    console.log(`=======================================================`);
+  });
+}
