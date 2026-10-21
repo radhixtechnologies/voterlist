@@ -12,6 +12,10 @@ const isPostgres = Boolean(process.env.DATABASE_URL);
 let pool;
 let sqlite;
 let sqliteDbPath;
+let isConnectedPostgres = false;
+export function getActiveDbType() {
+  return isConnectedPostgres ? 'PostgreSQL (Cloud)' : 'SQLite (Embedded)';
+}
 
 const postgresSchema = `
   CREATE TABLE IF NOT EXISTS users (
@@ -213,21 +217,30 @@ async function initializeSqlite() {
 }
 
 export async function initDatabase() {
-  if (!isPostgres) {
-    await initializeSqlite();
-    return;
+  if (isPostgres) {
+    try {
+      pool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },
+        max: Number(process.env.DATABASE_POOL_MAX || 5),
+        idleTimeoutMillis: 30_000,
+        connectionTimeoutMillis: 5_000,
+      });
+      await pool.query('SELECT 1');
+      await pool.query(postgresSchema);
+      isConnectedPostgres = true;
+      console.log('Connected to Cloud PostgreSQL database successfully.');
+      return;
+    } catch (pgError) {
+      console.warn('PostgreSQL connection failed:', pgError.message);
+      console.warn('Falling back to resilient embedded SQLite database...');
+      try { if (pool) await pool.end(); } catch (e) {}
+      pool = null;
+      isConnectedPostgres = false;
+    }
   }
 
-  pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_SSL === 'true'
-      ? { rejectUnauthorized: false }
-      : process.env.DATABASE_SSL === 'false' ? false : undefined,
-    max: Number(process.env.DATABASE_POOL_MAX || 5),
-    idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 10_000,
-  });
-  await pool.query(postgresSchema);
+  await initializeSqlite();
 }
 
 export async function closeDatabase() {
@@ -271,7 +284,7 @@ function normalizeArgs(args) {
 
 export const query = {
   async get(sql, ...args) {
-    if (!isPostgres) {
+    if (!isConnectedPostgres) {
       const stmt = sqlite.prepare(sql);
       stmt.bind(normalizeArgs(args));
       let row = undefined;
@@ -286,7 +299,7 @@ export const query = {
   },
 
   async all(sql, ...args) {
-    if (!isPostgres) {
+    if (!isConnectedPostgres) {
       const stmt = sqlite.prepare(sql);
       stmt.bind(normalizeArgs(args));
       const rows = [];
@@ -301,7 +314,7 @@ export const query = {
   },
 
   async run(sql, ...args) {
-    if (!isPostgres) {
+    if (!isConnectedPostgres) {
       sqlite.run(sql, normalizeArgs(args));
       const changes = sqlite.getRowsModified();
       const lastRes = sqlite.exec("SELECT last_insert_rowid() as id");
@@ -322,7 +335,7 @@ export const query = {
   },
 
   async exec(sql) {
-    if (!isPostgres) {
+    if (!isConnectedPostgres) {
       const res = sqlite.exec(sql);
       saveSqliteDisk();
       return res;
@@ -331,7 +344,7 @@ export const query = {
   },
 
   async transaction(callback) {
-    if (!isPostgres) {
+    if (!isConnectedPostgres) {
       sqlite.run('BEGIN TRANSACTION;');
       try {
         const result = await callback(query);

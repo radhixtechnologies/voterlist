@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { initDatabase } from './db.js';
+import { initDatabase, getActiveDbType } from './db.js';
 
 // Route imports
 import authRoutes from './routes/auth.js';
@@ -81,7 +81,7 @@ app.get('/api/health', (req, res) => {
     status: 'online',
     timestamp: new Date().toISOString(),
     service: 'CivicPulse Voter Management Portal API',
-    database: process.env.DATABASE_URL ? 'PostgreSQL (Cloud)' : 'SQLite (Embedded)',
+    database: getActiveDbType(),
     version: '1.0.0'
   });
 });
