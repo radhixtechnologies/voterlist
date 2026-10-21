@@ -1,8 +1,8 @@
+import 'express-async-errors';
 import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import dotenv from 'dotenv';
 import { initDatabase } from './db.js';
 
 // Route imports
@@ -13,19 +13,29 @@ import statsRoutes from './routes/stats.js';
 import auditRoutes from './routes/audit.js';
 import settingsRoutes from './routes/settings.js';
 
-dotenv.config();
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize DB schema
-initDatabase();
+await initDatabase();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const allowedOrigins = new Set(
+  (process.env.CORS_ORIGIN || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3000'))
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean)
+);
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.has(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Origin is not allowed by CORS.'));
+  }
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -75,7 +85,7 @@ app.get('*', (req, res, next) => {
 app.use((err, req, res, next) => {
   console.error('Unhandled server error:', err);
   res.status(500).json({
-    message: err.message || 'Internal server error occurred.',
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error occurred.',
     error: process.env.NODE_ENV === 'development' ? err.stack : undefined
   });
 });
@@ -86,4 +96,3 @@ app.listen(PORT, () => {
   console.log(` API Base: http://localhost:${PORT}/api`);
   console.log(`=======================================================`);
 });
-

@@ -1,12 +1,15 @@
 import bcrypt from 'bcryptjs';
-import { initDatabase, query } from './db.js';
+import { closeDatabase, initDatabase, query } from './db.js';
 
-initDatabase();
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('The demo seed cannot run in production.');
+}
+await initDatabase();
 
 console.log('--- Seeding database with realistic enterprise data ---');
 
 // Clear existing tables
-query.exec(`
+await query.exec(`
   DELETE FROM audit_logs;
   DELETE FROM voters;
   DELETE FROM users;
@@ -17,7 +20,7 @@ const defaultHash = bcrypt.hashSync('Password@123', 10);
 const tempHash = bcrypt.hashSync('Vote#8921', 10);
 
 // 1. Create Super Admin
-const superAdminRes = query.run(
+const superAdminRes = await query.run(
   `INSERT INTO users (login_id, email, mobile, password_hash, name, role, status, must_change_password)
    VALUES ('superadmin', 'superadmin@civicpulse.org', '9800000001', ?, 'Dr. Alexander Vance (Super Admin)', 'SUPER_ADMIN', 'ACTIVE', 0)`,
   defaultHash
@@ -25,14 +28,14 @@ const superAdminRes = query.run(
 const superAdminId = superAdminRes.lastInsertRowid;
 
 // 2. Create Admins
-const admin1Res = query.run(
+const admin1Res = await query.run(
   `INSERT INTO users (login_id, email, mobile, password_hash, name, role, status, created_by, must_change_password)
    VALUES ('admin.metro', 'admin.metro@civicpulse.org', '9800000002', ?, 'Rajesh Sharma (Admin - Metro)', 'ADMIN', 'ACTIVE', ?, 0)`,
   defaultHash, superAdminId
 );
 const adminMetroId = admin1Res.lastInsertRowid;
 
-const admin2Res = query.run(
+const admin2Res = await query.run(
   `INSERT INTO users (login_id, email, mobile, password_hash, name, role, status, created_by, must_change_password)
    VALUES ('admin.central', 'admin.central@civicpulse.org', '9800000003', ?, 'Priya Nair (Admin - Central)', 'ADMIN', 'ACTIVE', ?, 0)`,
   defaultHash, superAdminId
@@ -40,28 +43,28 @@ const admin2Res = query.run(
 const adminCentralId = admin2Res.lastInsertRowid;
 
 // 3. Create Associate Members
-const assoc1Res = query.run(
+const assoc1Res = await query.run(
   `INSERT INTO users (login_id, email, mobile, password_hash, name, role, status, created_by, managed_by_admin_id, must_change_password)
    VALUES ('assoc.rahul', 'rahul.verma@civicpulse.org', '9800000011', ?, 'Rahul Verma', 'ASSOCIATE_MEMBER', 'ACTIVE', ?, ?, 0)`,
   defaultHash, superAdminId, adminMetroId
 );
 const assocRahulId = assoc1Res.lastInsertRowid;
 
-const assoc2Res = query.run(
+const assoc2Res = await query.run(
   `INSERT INTO users (login_id, email, mobile, password_hash, name, role, status, created_by, managed_by_admin_id, must_change_password)
    VALUES ('assoc.anita', 'anita.desai@civicpulse.org', '9800000012', ?, 'Anita Desai', 'ASSOCIATE_MEMBER', 'ACTIVE', ?, ?, 0)`,
   defaultHash, superAdminId, adminMetroId
 );
 const assocAnitaId = assoc2Res.lastInsertRowid;
 
-const assoc3Res = query.run(
+const assoc3Res = await query.run(
   `INSERT INTO users (login_id, email, mobile, password_hash, name, role, status, created_by, managed_by_admin_id, must_change_password)
    VALUES ('assoc.vikram', 'vikram.singh@civicpulse.org', '9800000013', ?, 'Vikram Singh', 'ASSOCIATE_MEMBER', 'ACTIVE', ?, ?, 0)`,
   defaultHash, superAdminId, adminCentralId
 );
 const assocVikramId = assoc3Res.lastInsertRowid;
 
-const assoc4Res = query.run(
+const assoc4Res = await query.run(
   `INSERT INTO users (login_id, email, mobile, password_hash, name, role, status, created_by, managed_by_admin_id, must_change_password)
    VALUES ('assoc.sneha', 'sneha.patel@civicpulse.org', '9800000014', ?, 'Sneha Patel', 'ASSOCIATE_MEMBER', 'ACTIVE', ?, ?, 0)`,
   defaultHash, superAdminId, adminCentralId
@@ -300,8 +303,8 @@ const sampleVoters = [
   }
 ];
 
-sampleVoters.forEach(v => {
-  const userRes = query.run(
+for (const v of sampleVoters) {
+  const userRes = await query.run(
     `INSERT INTO users (login_id, mobile, password_hash, name, role, status, created_by, must_change_password, created_at)
      VALUES (?, ?, ?, ?, 'VOTER', ?, ?, ?, datetime('now', '-' || ? || ' days'))`,
     v.login_id,
@@ -314,7 +317,7 @@ sampleVoters.forEach(v => {
     v.daysAgo
   );
 
-  query.run(
+  await query.run(
     `INSERT INTO voters (
       user_id, voter_login_id, epic_number, full_name, mobile,
       gender, dob, age, address, ward, area,
@@ -338,7 +341,7 @@ sampleVoters.forEach(v => {
     v.status,
     v.daysAgo
   );
-});
+}
 
 // 5. Seed Portal Settings
 const defaultSettings = [
@@ -351,12 +354,12 @@ const defaultSettings = [
   { key: 'registration_status', value: 'OPEN', description: 'Portal registration status (OPEN/CLOSED)' }
 ];
 
-defaultSettings.forEach(s => {
-  query.run(
+for (const s of defaultSettings) {
+  await query.run(
     `INSERT INTO portal_settings (key, value, description) VALUES (?, ?, ?)`,
     s.key, s.value, s.description
   );
-});
+}
 
 // 6. Seed Audit Logs
 const sampleAuditLogs = [
@@ -398,13 +401,13 @@ const sampleAuditLogs = [
   }
 ];
 
-sampleAuditLogs.forEach(l => {
-  query.run(
+for (const l of sampleAuditLogs) {
+  await query.run(
     `INSERT INTO audit_logs (user_id, user_name, user_role, action, target_type, target_id, details, ip_address)
      VALUES (?, ?, ?, ?, ?, ?, ?, '127.0.0.1')`,
     l.userId, l.userName, l.userRole, l.action, l.targetType, l.targetId, l.details
   );
-});
+}
 
 console.log('Seeding completed successfully!');
 console.log('-------------------------------------------------------');
@@ -415,4 +418,4 @@ console.log('3. Associate Member: assoc.rahul      / Password@123');
 console.log('4. Voter (Active):   VOTER10025       / Password@123');
 console.log('5. Voter (1st Login):VOTER10026       / Vote#8921');
 console.log('-------------------------------------------------------');
-
+await closeDatabase();

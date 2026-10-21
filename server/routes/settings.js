@@ -6,8 +6,8 @@ import { recordAuditLog } from '../middleware/logger.js';
 const router = express.Router();
 
 // GET /api/settings/public
-router.get('/public', (req, res) => {
-  const settingsRows = query.all('SELECT key, value FROM portal_settings');
+router.get('/public', async (req, res) => {
+  const settingsRows = await query.all('SELECT key, value FROM portal_settings');
   const settings = {};
   settingsRows.forEach(row => {
     settings[row.key] = row.value;
@@ -16,13 +16,13 @@ router.get('/public', (req, res) => {
 });
 
 // GET /api/settings (Super Admin)
-router.get('/', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => {
-  const settings = query.all('SELECT * FROM portal_settings ORDER BY key ASC');
+router.get('/', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+  const settings = await query.all('SELECT * FROM portal_settings ORDER BY key ASC');
   res.json({ settings });
 });
 
 // PUT /api/settings (Super Admin)
-router.put('/', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => {
+router.put('/', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
   const { settings } = req.body; // array of { key, value } or object
 
   if (!settings) {
@@ -31,16 +31,16 @@ router.put('/', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => {
 
   const entries = Array.isArray(settings) ? settings : Object.entries(settings).map(([k, v]) => ({ key: k, value: v }));
 
-  entries.forEach(({ key, value }) => {
-    query.run(
+  for (const { key, value } of entries) {
+    await query.run(
       `INSERT INTO portal_settings (key, value, updated_at)
        VALUES (?, ?, datetime('now'))
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
       key, String(value)
     );
-  });
+  }
 
-  recordAuditLog({
+  await recordAuditLog({
     req,
     userId: req.user.id,
     userName: req.user.name,
@@ -55,4 +55,3 @@ router.put('/', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => {
 });
 
 export default router;
-

@@ -7,19 +7,19 @@ import { recordAuditLog } from '../middleware/logger.js';
 const router = express.Router();
 
 // Helper to generate login ID for admins / associate members if not provided
-function generateStaffLoginId(role) {
+async function generateStaffLoginId(role) {
   const prefix = role === 'ADMIN' ? 'ADMIN' : 'ASSOC';
-  const countRow = query.get('SELECT COUNT(*) as c FROM users WHERE role = ?', role);
+  const countRow = await query.get('SELECT COUNT(*) as c FROM users WHERE role = ?', role);
   const count = (countRow ? countRow.c : 0) + 101;
   let candidate = `${prefix}${count}`;
-  while (query.get('SELECT id FROM users WHERE login_id = ?', candidate)) {
+  while (await query.get('SELECT id FROM users WHERE login_id = ?', candidate)) {
     candidate = `${prefix}${Math.floor(1000 + Math.random() * 9000)}`;
   }
   return candidate;
 }
 
 // GET /api/users/admins (Super Admin only)
-router.get('/admins', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => {
+router.get('/admins', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
   const { search = '', status = '' } = req.query;
   const conditions = ["role = 'ADMIN'"];
   const params = [];
@@ -47,12 +47,12 @@ router.get('/admins', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) 
     ORDER BY u.created_at DESC
   `;
 
-  const admins = query.all(sql, ...params);
+  const admins = await query.all(sql, ...params);
   res.json({ admins });
 });
 
 // POST /api/users/admins (Super Admin only)
-router.post('/admins', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => {
+router.post('/admins', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
   const { name, email, mobile, password, login_id } = req.body;
 
   if (!name || !email || !password) {
@@ -61,10 +61,10 @@ router.post('/admins', authenticateToken, requireRole('SUPER_ADMIN'), (req, res)
 
   const cleanEmail = email.trim().toLowerCase();
   const cleanMobile = mobile ? mobile.trim() : null;
-  const finalLoginId = (login_id && login_id.trim()) ? login_id.trim().toUpperCase() : generateStaffLoginId('ADMIN');
+  const finalLoginId = (login_id && login_id.trim()) ? login_id.trim().toUpperCase() : await generateStaffLoginId('ADMIN');
 
   // Check unique constraints
-  const duplicate = query.get(
+  const duplicate = await query.get(
     'SELECT id, email, mobile, login_id FROM users WHERE LOWER(email) = ? OR (mobile = ? AND mobile IS NOT NULL) OR LOWER(login_id) = ?',
     cleanEmail, cleanMobile, finalLoginId.toLowerCase()
   );
@@ -74,7 +74,7 @@ router.post('/admins', authenticateToken, requireRole('SUPER_ADMIN'), (req, res)
   }
 
   const passwordHash = bcrypt.hashSync(password, 10);
-  const result = query.run(
+  const result = await query.run(
     `INSERT INTO users (login_id, email, mobile, password_hash, name, role, status, created_by)
      VALUES (?, ?, ?, ?, ?, 'ADMIN', 'ACTIVE', ?)`,
     finalLoginId,
@@ -85,7 +85,7 @@ router.post('/admins', authenticateToken, requireRole('SUPER_ADMIN'), (req, res)
     req.user.id
   );
 
-  recordAuditLog({
+  await recordAuditLog({
     req,
     userId: req.user.id,
     userName: req.user.name,
@@ -111,7 +111,7 @@ router.post('/admins', authenticateToken, requireRole('SUPER_ADMIN'), (req, res)
 });
 
 // GET /api/users/associates (Super Admin & Admin)
-router.get('/associates', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN'), (req, res) => {
+router.get('/associates', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN'), async (req, res) => {
   const user = req.user;
   const { search = '', status = '', adminId = '' } = req.query;
 
@@ -152,12 +152,12 @@ router.get('/associates', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN')
     ORDER BY u.created_at DESC
   `;
 
-  const associates = query.all(sql, ...params);
+  const associates = await query.all(sql, ...params);
   res.json({ associates });
 });
 
 // POST /api/users/associates (Super Admin & Admin)
-router.post('/associates', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN'), (req, res) => {
+router.post('/associates', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN'), async (req, res) => {
   const { name, email, mobile, password, login_id, managed_by_admin_id } = req.body;
 
   if (!name || !email || !password) {
@@ -174,9 +174,9 @@ router.post('/associates', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN'
 
   const cleanEmail = email.trim().toLowerCase();
   const cleanMobile = mobile ? mobile.trim() : null;
-  const finalLoginId = (login_id && login_id.trim()) ? login_id.trim().toUpperCase() : generateStaffLoginId('ASSOCIATE_MEMBER');
+  const finalLoginId = (login_id && login_id.trim()) ? login_id.trim().toUpperCase() : await generateStaffLoginId('ASSOCIATE_MEMBER');
 
-  const duplicate = query.get(
+  const duplicate = await query.get(
     'SELECT id, email, mobile, login_id FROM users WHERE LOWER(email) = ? OR (mobile = ? AND mobile IS NOT NULL) OR LOWER(login_id) = ?',
     cleanEmail, cleanMobile, finalLoginId.toLowerCase()
   );
@@ -186,7 +186,7 @@ router.post('/associates', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN'
   }
 
   const passwordHash = bcrypt.hashSync(password, 10);
-  const result = query.run(
+  const result = await query.run(
     `INSERT INTO users (login_id, email, mobile, password_hash, name, role, status, created_by, managed_by_admin_id)
      VALUES (?, ?, ?, ?, ?, 'ASSOCIATE_MEMBER', 'ACTIVE', ?, ?)`,
     finalLoginId,
@@ -198,7 +198,7 @@ router.post('/associates', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN'
     finalAdminId
   );
 
-  recordAuditLog({
+  await recordAuditLog({
     req,
     userId: req.user.id,
     userName: req.user.name,
@@ -225,7 +225,7 @@ router.post('/associates', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN'
 });
 
 // PATCH /api/users/:id/status (Toggle User Status)
-router.patch('/:id/status', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN'), (req, res) => {
+router.patch('/:id/status', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN'), async (req, res) => {
   const targetUserId = req.params.id;
   const { status } = req.body;
 
@@ -233,7 +233,7 @@ router.patch('/:id/status', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN
     return res.status(400).json({ message: 'Invalid status value.' });
   }
 
-  const targetUser = query.get('SELECT * FROM users WHERE id = ?', targetUserId);
+  const targetUser = await query.get('SELECT * FROM users WHERE id = ?', targetUserId);
   if (!targetUser) {
     return res.status(404).json({ message: 'User not found.' });
   }
@@ -253,9 +253,9 @@ router.patch('/:id/status', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN
     return res.status(400).json({ message: 'You cannot change your own account status.' });
   }
 
-  query.run("UPDATE users SET status = ?, updated_at = datetime('now') WHERE id = ?", status, targetUserId);
+  await query.run("UPDATE users SET status = ?, updated_at = datetime('now') WHERE id = ?", status, targetUserId);
 
-  recordAuditLog({
+  await recordAuditLog({
     req,
     userId: req.user.id,
     userName: req.user.name,
@@ -270,9 +270,9 @@ router.patch('/:id/status', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN
 });
 
 // DELETE /api/users/:id (Super Admin only)
-router.delete('/:id', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
   const targetUserId = req.params.id;
-  const targetUser = query.get('SELECT * FROM users WHERE id = ?', targetUserId);
+  const targetUser = await query.get('SELECT * FROM users WHERE id = ?', targetUserId);
 
   if (!targetUser) {
     return res.status(404).json({ message: 'User not found.' });
@@ -282,9 +282,9 @@ router.delete('/:id', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) 
     return res.status(400).json({ message: 'You cannot delete your own account.' });
   }
 
-  query.run('DELETE FROM users WHERE id = ?', targetUserId);
+  await query.run('DELETE FROM users WHERE id = ?', targetUserId);
 
-  recordAuditLog({
+  await recordAuditLog({
     req,
     userId: req.user.id,
     userName: req.user.name,
@@ -299,4 +299,3 @@ router.delete('/:id', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) 
 });
 
 export default router;
-

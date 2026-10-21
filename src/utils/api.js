@@ -1,3 +1,5 @@
+const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+
 export async function apiRequest(endpoint, { method = 'GET', body = null, token = null, isFormData = false } = {}) {
   const currentToken = token || localStorage.getItem('voter_portal_token');
   
@@ -10,7 +12,7 @@ export async function apiRequest(endpoint, { method = 'GET', body = null, token 
     headers['Content-Type'] = 'application/json';
   }
 
-  const response = await fetch(endpoint, {
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     method,
     headers,
     body: isFormData ? body : (body ? JSON.stringify(body) : undefined),
@@ -40,4 +42,3 @@ export async function apiRequest(endpoint, { method = 'GET', body = null, token 
 
   return data;
 }
-

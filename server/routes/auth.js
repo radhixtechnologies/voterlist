@@ -27,7 +27,7 @@ function checkRateLimit(ip) {
 }
 
 // POST /api/auth/login
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
   if (!checkRateLimit(clientIp)) {
     return res.status(429).json({ message: 'Too many login attempts. Please try again after 1 minute.' });
@@ -42,7 +42,7 @@ router.post('/login', (req, res) => {
   const cleanIdentifier = identifier.trim();
 
   // Search user by login_id, email, or mobile (case-insensitive for login_id and email)
-  const user = query.get(
+  const user = await query.get(
     `SELECT * FROM users WHERE LOWER(login_id) = LOWER(?) OR LOWER(email) = LOWER(?) OR mobile = ?`,
     cleanIdentifier, cleanIdentifier, cleanIdentifier
   );
@@ -61,10 +61,10 @@ router.post('/login', (req, res) => {
   }
 
   // Update last login
-  query.run("UPDATE users SET last_login_at = datetime('now') WHERE id = ?", user.id);
+  await query.run("UPDATE users SET last_login_at = datetime('now') WHERE id = ?", user.id);
 
   // Record audit log
-  recordAuditLog({
+  await recordAuditLog({
     req,
     userId: user.id,
     userName: user.name,
@@ -85,7 +85,7 @@ router.post('/login', (req, res) => {
   // If Voter, also fetch voter details & referrer name
   let voterProfile = null;
   if (user.role === 'VOTER') {
-    voterProfile = query.get(
+    voterProfile = await query.get(
       `SELECT v.*, u.name as referred_by_name, u.login_id as referred_by_login_id
        FROM voters v
        LEFT JOIN users u ON v.associate_member_id = u.id
@@ -112,12 +112,12 @@ router.post('/login', (req, res) => {
 });
 
 // GET /api/auth/me
-router.get('/me', authenticateToken, (req, res) => {
+router.get('/me', authenticateToken, async (req, res) => {
   const user = req.user;
   let voterProfile = null;
 
   if (user.role === 'VOTER') {
-    voterProfile = query.get(
+    voterProfile = await query.get(
       `SELECT v.*, u.name as referred_by_name, u.login_id as referred_by_login_id
        FROM voters v
        LEFT JOIN users u ON v.associate_member_id = u.id
@@ -143,7 +143,7 @@ router.get('/me', authenticateToken, (req, res) => {
 });
 
 // POST /api/auth/change-password
-router.post('/change-password', authenticateToken, (req, res) => {
+router.post('/change-password', authenticateToken, async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   const userId = req.user.id;
 
@@ -151,7 +151,7 @@ router.post('/change-password', authenticateToken, (req, res) => {
     return res.status(400).json({ message: 'New password must be at least 6 characters long.' });
   }
 
-  const currentUser = query.get('SELECT password_hash, must_change_password FROM users WHERE id = ?', userId);
+  const currentUser = await query.get('SELECT password_hash, must_change_password FROM users WHERE id = ?', userId);
   
   // If not in forced password change mode, verify current password
   if (currentUser.must_change_password !== 1) {
@@ -165,12 +165,12 @@ router.post('/change-password', authenticateToken, (req, res) => {
   }
 
   const newHash = bcrypt.hashSync(newPassword, 10);
-  query.run(
+  await query.run(
     "UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = datetime('now') WHERE id = ?",
     newHash, userId
   );
 
-  recordAuditLog({
+  await recordAuditLog({
     req,
     userId: req.user.id,
     userName: req.user.name,
@@ -185,8 +185,8 @@ router.post('/change-password', authenticateToken, (req, res) => {
 });
 
 // POST /api/auth/logout
-router.post('/logout', authenticateToken, (req, res) => {
-  recordAuditLog({
+router.post('/logout', authenticateToken, async (req, res) => {
+  await recordAuditLog({
     req,
     userId: req.user.id,
     userName: req.user.name,
@@ -201,4 +201,3 @@ router.post('/logout', authenticateToken, (req, res) => {
 });
 
 export default router;
-

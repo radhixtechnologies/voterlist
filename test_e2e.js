@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 
-const BASE_URL = 'http://localhost:5000/api';
+const BASE_URL = process.env.TEST_API_BASE_URL || 'http://localhost:5000/api';
 
 async function testSuite() {
   console.log('--- STARTING END-TO-END VERIFICATION TEST SUITE ---');
@@ -163,4 +163,3 @@ testSuite().catch(err => {
   console.error('Test suite failed:', err);
   process.exit(1);
 });
-

@@ -5,7 +5,7 @@ import { authenticateToken, requireRole } from '../middleware/auth.js';
 const router = express.Router();
 
 // GET /api/audit (Super Admin only)
-router.get('/', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => {
+router.get('/', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
   const { action = '', role = '', search = '', startDate = '', endDate = '', page = 1, limit = 20 } = req.query;
 
   const conditions = [];
@@ -35,10 +35,10 @@ router.get('/', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => {
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const total = query.get(`SELECT COUNT(*) as c FROM audit_logs ${whereClause}`, ...params).c;
+  const total = (await query.get(`SELECT COUNT(*) as c FROM audit_logs ${whereClause}`, ...params)).c;
 
   const offset = (Math.max(1, parseInt(page)) - 1) * parseInt(limit);
-  const logs = query.all(
+  const logs = await query.all(
     `SELECT * FROM audit_logs ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
     ...params, parseInt(limit), offset
   );
@@ -55,4 +55,3 @@ router.get('/', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => {
 });
 
 export default router;
-

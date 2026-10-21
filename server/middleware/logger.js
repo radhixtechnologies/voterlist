@@ -1,6 +1,6 @@
 import { query } from '../db.js';
 
-export function recordAuditLog({ req, userId, userName, userRole, action, targetType, targetId, details }) {
+export async function recordAuditLog({ req, userId, userName, userRole, action, targetType, targetId, details }) {
   try {
     const ip = req ? (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1') : 'system';
     
@@ -17,7 +17,7 @@ export function recordAuditLog({ req, userId, userName, userRole, action, target
       detailsString = details;
     }
 
-    query.run(
+    await query.run(
       `INSERT INTO audit_logs (user_id, user_name, user_role, action, target_type, target_id, details, ip_address)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       userId || null,
@@ -33,4 +33,3 @@ export function recordAuditLog({ req, userId, userName, userRole, action, target
     console.error('Failed to write audit log:', err.message);
   }
 }
-

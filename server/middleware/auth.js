@@ -1,6 +1,10 @@
 import jwt from 'jsonwebtoken';
 import { query } from '../db.js';
 
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET must be configured in production.');
+}
+
 export const JWT_SECRET = process.env.JWT_SECRET || 'voter-portal-super-secure-secret-key-2025';
 
 export function authenticateToken(req, res, next) {
@@ -11,16 +15,21 @@ export function authenticateToken(req, res, next) {
     return res.status(401).json({ message: 'Authentication required. No token provided.' });
   }
 
-  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+  jwt.verify(token, JWT_SECRET, async (err, decoded) => {
     if (err) {
       return res.status(403).json({ message: 'Session expired or invalid token.' });
     }
 
     // Fetch user from DB to ensure still active and permissions are current
-    const user = query.get(
-      'SELECT id, login_id, email, mobile, name, role, status, managed_by_admin_id, must_change_password FROM users WHERE id = ?',
-      decoded.id
-    );
+    let user;
+    try {
+      user = await query.get(
+        'SELECT id, login_id, email, mobile, name, role, status, managed_by_admin_id, must_change_password FROM users WHERE id = ?',
+        decoded.id
+      );
+    } catch (error) {
+      return next(error);
+    }
 
     if (!user) {
       return res.status(401).json({ message: 'User account not found.' });
@@ -52,4 +61,3 @@ export function requireRole(...allowedRoles) {
     next();
   };
 }
-

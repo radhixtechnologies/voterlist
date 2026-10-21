@@ -8,13 +8,13 @@ import { recordAuditLog } from '../middleware/logger.js';
 const router = express.Router();
 
 // Helper to generate a unique Voter Login ID (e.g. VOTER10025)
-function generateVoterLoginId() {
-  const countRow = query.get("SELECT COUNT(*) as count FROM users WHERE role = 'VOTER'");
+async function generateVoterLoginId() {
+  const countRow = await query.get("SELECT COUNT(*) as count FROM users WHERE role = 'VOTER'");
   const nextNum = 10001 + (countRow ? countRow.count : 0) + Math.floor(Math.random() * 10);
   let candidate = `VOTER${nextNum}`;
   
   // Ensure uniqueness
-  while (query.get('SELECT id FROM users WHERE login_id = ?', candidate)) {
+  while (await query.get('SELECT id FROM users WHERE login_id = ?', candidate)) {
     const randomSuffix = Math.floor(10000 + Math.random() * 90000);
     candidate = `VOTER${randomSuffix}`;
   }
@@ -30,7 +30,7 @@ function generateTempPassword() {
 }
 
 // GET /api/voters (Scoped voter list)
-router.get('/', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN', 'ASSOCIATE_MEMBER'), (req, res) => {
+router.get('/', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN', 'ASSOCIATE_MEMBER'), async (req, res) => {
   const {
     search = '',
     status = '',
@@ -106,7 +106,7 @@ router.get('/', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN', 'ASSOCIAT
 
   // Get total count
   const countSql = `SELECT COUNT(*) as total FROM voters v ${whereClause}`;
-  const totalRow = query.get(countSql, ...params);
+  const totalRow = await query.get(countSql, ...params);
   const total = totalRow ? totalRow.total : 0;
 
   // Safe sorting columns
@@ -128,7 +128,7 @@ router.get('/', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN', 'ASSOCIAT
     LIMIT ? OFFSET ?
   `;
 
-  const voters = query.all(dataSql, ...params, parseInt(limit), offset);
+  const voters = await query.all(dataSql, ...params, parseInt(limit), offset);
 
   res.json({
     voters,
@@ -142,7 +142,7 @@ router.get('/', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN', 'ASSOCIAT
 });
 
 // GET /api/voters/export/csv (CSV Export with same scoping)
-router.get('/export/csv', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN', 'ASSOCIATE_MEMBER'), (req, res) => {
+router.get('/export/csv', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN', 'ASSOCIATE_MEMBER'), async (req, res) => {
   const user = req.user;
   const conditions = [];
   const params = [];
@@ -183,7 +183,7 @@ router.get('/export/csv', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN',
     ORDER BY v.created_at DESC
   `;
 
-  const rows = query.all(dataSql, ...params);
+  const rows = await query.all(dataSql, ...params);
 
   // Build CSV
   if (rows.length === 0) {
@@ -212,7 +212,7 @@ router.get('/export/csv', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN',
 });
 
 // POST /api/voters (Create Voter - Associate Member or Super Admin)
-router.post('/', authenticateToken, requireRole('SUPER_ADMIN', 'ASSOCIATE_MEMBER'), (req, res) => {
+router.post('/', authenticateToken, requireRole('SUPER_ADMIN', 'ASSOCIATE_MEMBER'), async (req, res) => {
   const {
     full_name,
     mobile,
@@ -247,11 +247,11 @@ router.post('/', authenticateToken, requireRole('SUPER_ADMIN', 'ASSOCIATE_MEMBER
   // 2 & 3. Duplicate checks according to requirements:
   // "If a duplicate mobile number or voter ID is detected, display a clear message such as:
   //  'This voter is already registered.' Do not create duplicate accounts or expose existing credentials."
-  const existingVoter = query.get(
+  const existingVoter = await query.get(
     'SELECT id FROM voters WHERE mobile = ? OR epic_number = ?',
     cleanMobile, cleanEpic
   );
-  const existingUser = query.get('SELECT id FROM users WHERE mobile = ?', cleanMobile);
+  const existingUser = await query.get('SELECT id FROM users WHERE mobile = ?', cleanMobile);
 
   if (existingVoter || existingUser) {
     return res.status(409).json({
@@ -264,16 +264,16 @@ router.post('/', authenticateToken, requireRole('SUPER_ADMIN', 'ASSOCIATE_MEMBER
   const associateMemberName = req.user.name;
 
   // 4 & 5. Generate unique Login ID and Temporary Password
-  const loginId = generateVoterLoginId();
+  const loginId = await generateVoterLoginId();
   const tempPassword = generateTempPassword();
   const passwordHash = bcrypt.hashSync(tempPassword, 10);
 
   try {
-    // Transactionally create User account and Voter Profile
-    query.exec('BEGIN TRANSACTION;');
-
+    let newUserId;
+    let voterId;
+    await query.transaction(async transaction => {
     // Insert user account with must_change_password = 1
-    const userResult = query.run(
+    const userResult = await transaction.run(
       `INSERT INTO users (login_id, mobile, password_hash, name, role, status, created_by, must_change_password)
        VALUES (?, ?, ?, ?, 'VOTER', 'ACTIVE', ?, 1)`,
       loginId,
@@ -282,7 +282,7 @@ router.post('/', authenticateToken, requireRole('SUPER_ADMIN', 'ASSOCIATE_MEMBER
       full_name.trim(),
       associateMemberId
     );
-    const newUserId = userResult.lastInsertRowid;
+    newUserId = userResult.lastInsertRowid;
 
     // Calculate age if dob is provided and age isn't
     let computedAge = age ? parseInt(age) : null;
@@ -293,7 +293,7 @@ router.post('/', authenticateToken, requireRole('SUPER_ADMIN', 'ASSOCIATE_MEMBER
     }
 
     // Insert voter profile
-    const voterResult = query.run(
+    const voterResult = await transaction.run(
       `INSERT INTO voters (
         user_id, voter_login_id, epic_number, full_name, mobile,
         gender, dob, age, address, ward, area,
@@ -317,19 +317,20 @@ router.post('/', authenticateToken, requireRole('SUPER_ADMIN', 'ASSOCIATE_MEMBER
       emergency_contact ? emergency_contact.trim() : null
     );
 
-    query.exec('COMMIT;');
+    voterId = voterResult.lastInsertRowid;
+    });
 
     // Record audit log
-    recordAuditLog({
+    await recordAuditLog({
       req,
       userId: req.user.id,
       userName: req.user.name,
       userRole: req.user.role,
       action: 'CREATE_VOTER',
       targetType: 'VOTER',
-      targetId: voterResult.lastInsertRowid,
+      targetId: voterId,
       details: {
-        voter_id: voterResult.lastInsertRowid,
+        voter_id: voterId,
         login_id: loginId,
         epic_number: cleanEpic,
         registered_by: req.user.name
@@ -340,7 +341,7 @@ router.post('/', authenticateToken, requireRole('SUPER_ADMIN', 'ASSOCIATE_MEMBER
     return res.status(201).json({
       message: 'Voter registered successfully!',
       voter: {
-        id: voterResult.lastInsertRowid,
+        id: voterId,
         user_id: newUserId,
         login_id: loginId,
         epic_number: cleanEpic,
@@ -361,16 +362,15 @@ router.post('/', authenticateToken, requireRole('SUPER_ADMIN', 'ASSOCIATE_MEMBER
       }
     });
   } catch (error) {
-    try { query.exec('ROLLBACK;'); } catch (e) {}
     console.error('Error creating voter:', error);
     return res.status(500).json({ message: 'Internal server error while creating voter record.' });
   }
 });
 
 // GET /api/voters/:id (Get single voter details)
-router.get('/:id', authenticateToken, (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
   const voterId = req.params.id;
-  const voter = query.get(
+  const voter = await query.get(
     `SELECT v.*, u.name as associate_name, u.login_id as associate_login_id, u.email as associate_email, u.mobile as associate_mobile
      FROM voters v
      LEFT JOIN users u ON v.associate_member_id = u.id
@@ -394,7 +394,7 @@ router.get('/:id', authenticateToken, (req, res) => {
     }
   } else if (user.role === 'ADMIN') {
     // Check if voter's associate member is managed by this Admin
-    const assoc = query.get('SELECT managed_by_admin_id FROM users WHERE id = ?', voter.associate_member_id);
+    const assoc = await query.get('SELECT managed_by_admin_id FROM users WHERE id = ?', voter.associate_member_id);
     if (!assoc || assoc.managed_by_admin_id !== user.id) {
       return res.status(403).json({ message: 'Access denied: Voter is not under your managed Associate Members.' });
     }
@@ -404,9 +404,9 @@ router.get('/:id', authenticateToken, (req, res) => {
 });
 
 // PATCH /api/voters/:id (Update permitted voter fields)
-router.patch('/:id', authenticateToken, (req, res) => {
+router.patch('/:id', authenticateToken, async (req, res) => {
   const voterId = req.params.id;
-  const voter = query.get('SELECT * FROM voters WHERE id = ?', voterId);
+  const voter = await query.get('SELECT * FROM voters WHERE id = ?', voterId);
 
   if (!voter) {
     return res.status(404).json({ message: 'Voter not found.' });
@@ -424,13 +424,13 @@ router.patch('/:id', authenticateToken, (req, res) => {
     
     // If mobile changed, check uniqueness
     if (mobile && mobile !== voter.mobile) {
-      const duplicate = query.get('SELECT id FROM voters WHERE mobile = ? AND id != ?', mobile, voterId);
+      const duplicate = await query.get('SELECT id FROM voters WHERE mobile = ? AND id != ?', mobile, voterId);
       if (duplicate) {
         return res.status(409).json({ message: 'This mobile number is already registered to another voter.' });
       }
     }
 
-    query.run(
+    await query.run(
       `UPDATE voters SET
          address = COALESCE(?, address),
          emergency_contact = COALESCE(?, emergency_contact),
@@ -444,10 +444,10 @@ router.patch('/:id', authenticateToken, (req, res) => {
     );
 
     if (mobile) {
-      query.run("UPDATE users SET mobile = ?, updated_at = datetime('now') WHERE id = ?", mobile, voter.user_id);
+      await query.run("UPDATE users SET mobile = ?, updated_at = datetime('now') WHERE id = ?", mobile, voter.user_id);
     }
 
-    recordAuditLog({
+    await recordAuditLog({
       req,
       userId: user.id,
       userName: user.name,
@@ -466,7 +466,7 @@ router.patch('/:id', authenticateToken, (req, res) => {
     return res.status(403).json({ message: 'Unauthorized to modify this voter.' });
   }
   if (user.role === 'ADMIN') {
-    const assoc = query.get('SELECT managed_by_admin_id FROM users WHERE id = ?', voter.associate_member_id);
+    const assoc = await query.get('SELECT managed_by_admin_id FROM users WHERE id = ?', voter.associate_member_id);
     if (!assoc || assoc.managed_by_admin_id !== user.id) {
       return res.status(403).json({ message: 'Unauthorized to modify this voter.' });
     }
@@ -474,7 +474,7 @@ router.patch('/:id', authenticateToken, (req, res) => {
 
   const { full_name, mobile, address, ward, area, constituency, district, state, emergency_contact, status } = req.body;
 
-  query.run(
+  await query.run(
     `UPDATE voters SET
        full_name = COALESCE(?, full_name),
        mobile = COALESCE(?, mobile),
@@ -502,7 +502,7 @@ router.patch('/:id', authenticateToken, (req, res) => {
   );
 
   if (full_name || mobile || status) {
-    query.run(
+    await query.run(
       `UPDATE users SET
          name = COALESCE(?, name),
          mobile = COALESCE(?, mobile),
@@ -516,7 +516,7 @@ router.patch('/:id', authenticateToken, (req, res) => {
     );
   }
 
-  recordAuditLog({
+  await recordAuditLog({
     req,
     userId: user.id,
     userName: user.name,
@@ -531,7 +531,7 @@ router.patch('/:id', authenticateToken, (req, res) => {
 });
 
 // PATCH /api/voters/:id/status (Toggle status)
-router.patch('/:id/status', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN'), (req, res) => {
+router.patch('/:id/status', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN'), async (req, res) => {
   const voterId = req.params.id;
   const { status } = req.body;
 
@@ -539,25 +539,25 @@ router.patch('/:id/status', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN
     return res.status(400).json({ message: 'Invalid status. Must be ACTIVE, INACTIVE, or FLAGGED.' });
   }
 
-  const voter = query.get('SELECT * FROM voters WHERE id = ?', voterId);
+  const voter = await query.get('SELECT * FROM voters WHERE id = ?', voterId);
   if (!voter) {
     return res.status(404).json({ message: 'Voter not found.' });
   }
 
   // Admin scoping check
   if (req.user.role === 'ADMIN') {
-    const assoc = query.get('SELECT managed_by_admin_id FROM users WHERE id = ?', voter.associate_member_id);
+    const assoc = await query.get('SELECT managed_by_admin_id FROM users WHERE id = ?', voter.associate_member_id);
     if (!assoc || assoc.managed_by_admin_id !== req.user.id) {
       return res.status(403).json({ message: 'Unauthorized to modify this voter.' });
     }
   }
 
-  query.run("UPDATE voters SET status = ?, updated_at = datetime('now') WHERE id = ?", status, voterId);
+  await query.run("UPDATE voters SET status = ?, updated_at = datetime('now') WHERE id = ?", status, voterId);
   // Also reflect on users table
   const userStatus = status === 'FLAGGED' ? 'SUSPENDED' : status;
-  query.run("UPDATE users SET status = ?, updated_at = datetime('now') WHERE id = ?", userStatus, voter.user_id);
+  await query.run("UPDATE users SET status = ?, updated_at = datetime('now') WHERE id = ?", userStatus, voter.user_id);
 
-  recordAuditLog({
+  await recordAuditLog({
     req,
     userId: req.user.id,
     userName: req.user.name,
@@ -572,20 +572,20 @@ router.patch('/:id/status', authenticateToken, requireRole('SUPER_ADMIN', 'ADMIN
 });
 
 // DELETE /api/voters/:id (Super Admin only)
-router.delete('/:id', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
   const voterId = req.params.id;
-  const voter = query.get('SELECT * FROM voters WHERE id = ?', voterId);
+  const voter = await query.get('SELECT * FROM voters WHERE id = ?', voterId);
 
   if (!voter) {
     return res.status(404).json({ message: 'Voter not found.' });
   }
 
-  query.exec('BEGIN TRANSACTION;');
-  query.run('DELETE FROM voters WHERE id = ?', voterId);
-  query.run('DELETE FROM users WHERE id = ?', voter.user_id);
-  query.exec('COMMIT;');
+  await query.transaction(async transaction => {
+    await transaction.run('DELETE FROM voters WHERE id = ?', voterId);
+    await transaction.run('DELETE FROM users WHERE id = ?', voter.user_id);
+  });
 
-  recordAuditLog({
+  await recordAuditLog({
     req,
     userId: req.user.id,
     userName: req.user.name,
