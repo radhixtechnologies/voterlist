@@ -84,7 +84,9 @@ const postgresSchema = `
   CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
 `;
 
+let inTransaction = false;
 function saveSqliteDisk() {
+  if (inTransaction) return; // sql.js export() resets/commits open transactions; only export when not in transaction
   if (sqlite && sqliteDbPath) {
     try {
       const data = sqlite.export();
@@ -345,14 +347,17 @@ export const query = {
 
   async transaction(callback) {
     if (!isConnectedPostgres) {
+      inTransaction = true;
       sqlite.run('BEGIN TRANSACTION;');
       try {
         const result = await callback(query);
         sqlite.run('COMMIT;');
+        inTransaction = false;
         saveSqliteDisk();
         return result;
       } catch (error) {
         try { sqlite.run('ROLLBACK;'); } catch (e) {}
+        inTransaction = false;
         throw error;
       }
     }
