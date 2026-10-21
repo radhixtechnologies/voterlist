@@ -93,7 +93,17 @@ function saveSqliteDisk() {
 }
 
 async function initializeSqlite() {
-  const SQL = await initSqlJs();
+  const wasmCandidatePaths = [
+    path.join(__dirname, '..', 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm'),
+    path.join(process.cwd(), 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm'),
+    path.join(__dirname, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm'),
+  ];
+  const validWasmPath = wasmCandidatePaths.find(p => fs.existsSync(p));
+
+  const SQL = await initSqlJs({
+    locateFile: (file) => (validWasmPath && file.endsWith('.wasm') ? validWasmPath : file)
+  });
+
   const defaultPath = process.env.VERCEL
     ? path.join('/tmp', 'voter_portal.db')
     : path.join(__dirname, '..', 'data', 'voter_portal.db');

@@ -16,10 +16,25 @@ import settingsRoutes from './routes/settings.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-await initDatabase();
-
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Database initialization promise
+let dbInitPromise = null;
+export async function ensureDatabase() {
+  if (!dbInitPromise) {
+    dbInitPromise = initDatabase().catch(err => {
+      console.error('Database initialization error:', err);
+      dbInitPromise = null; // allow retry on next request
+      throw err;
+    });
+  }
+  return dbInitPromise;
+}
+
+// Trigger initial connection
+ensureDatabase().catch(() => {});
+
 const allowedOrigins = new Set(
   (process.env.CORS_ORIGIN || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3000'))
     .split(',')
@@ -27,23 +42,28 @@ const allowedOrigins = new Set(
     .filter(Boolean)
 );
 
-if (process.env.NODE_ENV === 'production' && allowedOrigins.size === 0) {
-  throw new Error('CORS_ORIGIN must be configured in production.');
-}
-
 // Middleware
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.has(origin)) {
+    if (!origin || allowedOrigins.size === 0 || allowedOrigins.has(origin)) {
       return callback(null, true);
     }
     return callback(new Error('Origin is not allowed by CORS.'));
   }
 }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Request logging in development
+// Ensure /api prefix compatibility on serverless platforms
+app.use((req, res, next) => {
+  if (!req.url.startsWith('/api') && !req.url.startsWith('/assets') && !req.url.includes('.')) {
+    req.url = '/api' + req.url;
+  }
+  next();
+});
+
+// Request logging
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
@@ -55,14 +75,29 @@ app.use((req, res, next) => {
   next();
 });
 
-// Health check
+// Health check (always responds without waiting for DB)
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'online',
     timestamp: new Date().toISOString(),
     service: 'CivicPulse Voter Management Portal API',
+    database: process.env.DATABASE_URL ? 'PostgreSQL (Cloud)' : 'SQLite (Embedded)',
     version: '1.0.0'
   });
+});
+
+// Ensure DB is ready before API endpoints
+app.use(async (req, res, next) => {
+  if (req.url === '/api/health') return next();
+  try {
+    await ensureDatabase();
+    next();
+  } catch (err) {
+    res.status(500).json({
+      message: 'Database connection error: ' + (err.message || 'Unknown error'),
+      hint: 'If running on Vercel, consider setting DATABASE_URL in Vercel Environment Variables.'
+    });
+  }
 });
 
 // API Routes
@@ -73,11 +108,11 @@ app.use('/api/stats', statsRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/settings', settingsRoutes);
 
-// In production, serve frontend dist
+// In production (local/container), serve frontend dist
 const distPath = path.join(__dirname, '..', 'dist');
 app.use(express.static(distPath));
 
-// Fallback to index.html for client-side routing in production
+// Fallback to index.html for client-side routing
 app.get('*', (req, res, next) => {
   if (req.url.startsWith('/api')) return next();
   res.sendFile(path.join(distPath, 'index.html'), err => {
@@ -89,7 +124,7 @@ app.get('*', (req, res, next) => {
 app.use((err, req, res, next) => {
   console.error('Unhandled server error:', err);
   res.status(500).json({
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error occurred.',
+    message: process.env.NODE_ENV === 'development' ? err.message : (err.message || 'Internal server error occurred.'),
     error: process.env.NODE_ENV === 'development' ? err.stack : undefined
   });
 });
