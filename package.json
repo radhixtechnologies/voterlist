@@ -15,6 +15,7 @@
     "start": "node server/index.js",
     "seed": "node server/seed.js",
     "bootstrap:admin": "node server/bootstrap-admin.js",
+    "reset:admin-password": "node server/reset-admin-password.js",
     "test:e2e": "node test_e2e.js"
   },
   "dependencies": {
